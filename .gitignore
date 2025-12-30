@@ -1,0 +1,15 @@
+# Build artifacts
+build/
+
+# Lazy context
+.lazy/
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# OS
+.DS_Store

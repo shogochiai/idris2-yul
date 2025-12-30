@@ -1,0 +1,7 @@
+# idris2-yul pack.toml
+# Local package definitions for lazy core ask compatibility
+
+[custom.all.idris2-coverage]
+type   = "local"
+path   = "/Users/bob/code/idris2-coverage"
+ipkg   = "idris2-coverage.ipkg"
