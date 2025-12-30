@@ -1,10 +1,10 @@
-# idris2-evm
+# idris2-yul
 
 Idris2 to EVM backend via Yul intermediate language.
 
-## Status: Working Prototype
+## Status: Active Development
 
-Compiles Idris2 to EVM bytecode via Yul. Counter contract example is fully functional on Cancun EVM.
+Compiles Idris2 to EVM bytecode via Yul. Multiple example contracts are functional including Counter, ERC20, BondingCurve, and TextDAO.
 
 ## Architecture
 
@@ -51,25 +51,26 @@ src/
 
 ```bash
 # Build the custom compiler
-pack build idris2-evm
+pack build idris2-yul
 
 # Or with idris2 directly
-idris2 --build idris2-evm.ipkg
+idris2 --build idris2-yul.ipkg
 ```
 
 ### Compiling Contracts
 
 ```bash
-# Quick build with default EVM version (cancun)
+# Quick build with default EVM version (osaka)
 ./scripts/build-contract.sh examples/Counter.idr
 
 # Specify EVM version for hardfork compatibility
+./scripts/build-contract.sh examples/Counter.idr osaka    # Fusaka (December 2025)
 ./scripts/build-contract.sh examples/Counter.idr cancun   # Dencun (March 2024)
 ./scripts/build-contract.sh examples/Counter.idr shanghai # Shanghai (April 2023)
 
 # Manual steps
-./build/exec/idris2-evm examples/Counter.idr -o Counter.yul
-solc --strict-assembly --evm-version cancun --bin build/exec/Counter.yul.yul
+./build/exec/idris2-yul examples/Counter.idr -o Counter.yul
+solc --strict-assembly --evm-version osaka --bin build/exec/Counter.yul.yul
 ```
 
 ### Testing Contracts
@@ -78,6 +79,20 @@ solc --strict-assembly --evm-version cancun --bin build/exec/Counter.yul.yul
 # Run the test suite
 ./test/test_counter.sh
 ```
+
+## Example Contracts
+
+| Contract | Description |
+|----------|-------------|
+| `Counter.idr` | Simple counter with increment/decrement |
+| `ERC20.idr` | Standard ERC20 token implementation |
+| `BondingCurve.idr` | Token with bonding curve pricing |
+| `LinearToken.idr` | Linear types for safe token transfers |
+| `Dictionary.idr` | Key-value storage pattern |
+| `Proxy.idr` / `ProxyCreator.idr` | Upgradeable proxy pattern |
+| `FeatureToggle.idr` | Feature flag management |
+| `Receive.idr` | ETH receive handling |
+| `TextDAO_*.idr` | DAO with proposal/voting/tally |
 
 ## EVM Version Compatibility
 
