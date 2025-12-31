@@ -5,3 +5,8 @@
 type   = "local"
 path   = "/Users/bob/code/idris2-coverage"
 ipkg   = "idris2-coverage.ipkg"
+
+[custom.all.idris2-mc]
+type   = "local"
+path   = "/Users/bob/code/idris2-mc"
+ipkg   = "idris2-mc.ipkg"
