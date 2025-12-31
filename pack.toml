@@ -6,7 +6,7 @@ type   = "local"
 path   = "/Users/bob/code/idris2-coverage"
 ipkg   = "idris2-coverage.ipkg"
 
-[custom.all.idris2-mc]
+[custom.all.idris2-subcontract]
 type   = "local"
-path   = "/Users/bob/code/idris2-mc"
-ipkg   = "idris2-mc.ipkg"
+path   = "/Users/bob/code/idris2-subcontract"
+ipkg   = "idris2-subcontract.ipkg"
