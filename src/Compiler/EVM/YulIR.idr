@@ -60,6 +60,17 @@ mutual
   public export
   data YulCase = MkCase YulLiteral YulStmt   -- case lit { body }
 
+||| Source location for coverage mapping
+public export
+record SourceLoc where
+  constructor MkSourceLoc
+  moduleName : String    -- e.g., "TextDAO.Functions.Propose"
+  functionName : String  -- e.g., "propose"
+
+public export
+Show SourceLoc where
+  show loc = loc.moduleName ++ "." ++ loc.functionName
+
 ||| Yul function definition
 public export
 record YulFun where
@@ -68,6 +79,7 @@ record YulFun where
   params : List YulId
   returns : List YulId
   body : YulStmt
+  sourceLoc : Maybe SourceLoc  -- Source location for coverage
 
 ||| Yul object (top-level compilation unit)
 public export
@@ -198,10 +210,15 @@ showBlockBody ind (YBlock stmts) =
 showBlockBody ind stmt = showStmt ind stmt
 
 ||| Show function with given base indentation
+||| Includes @source comment for coverage mapping if sourceLoc is present
 showFunIndented : Nat -> YulFun -> String
 showFunIndented baseInd f =
   let ind = pack (replicate baseInd ' ')
-  in ind ++ "function " ++ f.name ++
+      sourceComment = case f.sourceLoc of
+                        Just loc => ind ++ "// @source: " ++ show loc ++ "\n"
+                        Nothing => ind ++ "// @source: NONE\n"  -- Debug: always output
+  in sourceComment ++
+     ind ++ "function " ++ f.name ++
      "(" ++ joinBy ", " f.params ++ ")" ++
      (if null f.returns then "" else " -> " ++ joinBy ", " f.returns) ++
      " " ++ showBlockBody baseInd f.body

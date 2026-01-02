@@ -30,19 +30,58 @@ Idris2 Source → ANF IR → Yul AST → Yul Source → solc → EVM Bytecode
   - Solc handles stack management
   - Access to optimizer
 
+- **Coverage Mapping**: `@source` comments in Yul output enable:
+  - PC → Yul → Idris2 function tracing
+  - Function-level coverage reports
+  - Integration with `idris2-evm-coverage`
+
 ## Project Structure
 
 ```
 src/
 ├── Compiler/EVM/
 │   ├── Yul.idr        # Backend entry point (Codegen implementation)
-│   ├── YulIR.idr      # Yul AST types and pretty printer
-│   ├── Codegen.idr    # ANF → Yul compilation
+│   ├── YulIR.idr      # Yul AST types, pretty printer, @source comments
+│   ├── Codegen.idr    # ANF → Yul compilation, source location tracking
 │   ├── Memory.idr     # Bump allocator and data layout
 │   ├── Primitives.idr # Idris primitives → EVM opcodes
 │   ├── Foreign.idr    # EVM FFI (%foreign "evm:...")
 │   └── ABI.idr        # Ethereum ABI encoding/decoding
 └── Main.idr           # Compiler entry point
+```
+
+## Coverage Integration
+
+The compiler emits `// @source:` comments before each function in Yul output:
+
+```yul
+// @source: TextDAO.Functions.Members.isMember
+function TextDAO_Functions_Members_u_isMember(v1, v0) -> result {
+  ...
+}
+```
+
+This enables the coverage pipeline:
+
+```
+PC (execution trace) → solc --asm-json → Yul byte offset → @source → Idris2 function
+```
+
+### Usage with idris2-evm-coverage
+
+```bash
+# 1. Compile with idris2-yul
+idris2-yul --cg yul --build mycontract.ipkg
+
+# 2. Generate asm-json mapping
+solc --strict-assembly --asm-json build/exec/mycontract.yul > asm.json
+
+# 3. Run with trace collection (anvil + cast)
+anvil --code-size-limit 100000 --steps-tracing &
+# ... deploy and call contract ...
+curl -X POST localhost:8545 -d '{"method":"debug_traceTransaction",...}'
+
+# 4. Map PCs to Idris2 functions for coverage report
 ```
 
 ## Usage

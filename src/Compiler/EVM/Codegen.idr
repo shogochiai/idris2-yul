@@ -73,6 +73,26 @@ mangleName (Resolved i) = "r_" ++ show i
 varName : Int -> YulId
 varName i = "v" ++ show i
 
+-- Find the "u_" or "m_" prefix to split module from function
+findFuncPart : List String -> List String -> Maybe (List String, String)
+findFuncPart acc [] = Nothing
+findFuncPart acc ("u" :: funcName :: rest) = Just (reverse acc, funcName)
+findFuncPart acc ("m" :: funcName :: _ :: rest) = Just (reverse acc, funcName)
+findFuncPart acc ("f" :: funcName :: rest) = Just (reverse acc, funcName)
+findFuncPart acc (p :: rest) = findFuncPart (p :: acc) rest
+
+||| Extract source location from Idris name for coverage mapping
+||| Always returns a SourceLoc - falls back to mangled name
+nameToSourceLoc : Name -> Maybe SourceLoc
+nameToSourceLoc n =
+  let mangled = mangleName n
+      parts = forget $ split (== '_') mangled
+  in case findFuncPart [] parts of
+       Just (modParts, funcName) =>
+         let modName = if null modParts then "<generated>" else joinBy "." modParts
+         in Just $ MkSourceLoc modName funcName
+       Nothing => Just $ MkSourceLoc "<unknown>" mangled  -- Fallback: always return something
+
 ||| Convert AVar to Yul expression
 compileAVar : AVar -> YulExpr
 compileAVar (ALocal i) = yulVar (varName i)
@@ -185,21 +205,28 @@ record CompileCtx where
   constructor MkCompileCtx
   arities : FnArityMap
   closureIds : ClosureIdMap
+  nextCaseId : Nat  -- Unique ID counter for case_result variables
+
+||| Generate next unique case result variable name and return updated context
+nextCaseVar : CompileCtx -> (CompileCtx, String)
+nextCaseVar ctx =
+  let varName = "case_result_" ++ show ctx.nextCaseId
+  in ({ nextCaseId $= (+1) } ctx, varName)
 
 mutual
-  ||| Compile ANF expression to (statements, expression)
-  ||| Returns statements needed to compute the expression, plus the expression itself
-  compileANFExprWithStmts : CompileCtx -> ANF -> Core (List YulStmt, YulExpr)
+  ||| Compile ANF expression to (context, statements, expression)
+  ||| Returns updated context (with incremented case ID), statements, and expression
+  compileANFExprWithStmts : CompileCtx -> ANF -> Core (CompileCtx, List YulStmt, YulExpr)
 
   -- Variable reference
-  compileANFExprWithStmts ctx (AV _ var) = pure ([], compileAVar var)
+  compileANFExprWithStmts ctx (AV _ var) = pure (ctx, [], compileAVar var)
 
   -- Application to named function
   compileANFExprWithStmts ctx (AAppName _ _ n args) = do
     let fnName = mangleName n
     let compiledArgs = map compileAVar args
     let paddedArgs = padArgs ctx.arities fnName compiledArgs
-    pure ([], yulCall fnName paddedArgs)
+    pure (ctx, [], yulCall fnName paddedArgs)
 
   -- Partial application - create a closure
   compileANFExprWithStmts ctx (AUnderApp _ n missing args) = do
@@ -207,72 +234,195 @@ mutual
     let compiledArgs = map compileAVar args
     case lookup fnName ctx.closureIds of
       Just closureId =>
-        pure ([], yulCall "mk_closure" ([yulNum closureId, yulNum (cast missing)] ++ compiledArgs))
+        -- mk_closure requires exactly 6 args: func_id, arity, arg0, arg1, arg2, arg3
+        let paddedClosureArgs = take 4 (compiledArgs ++ replicate 4 (yulNum 0))
+        in pure (ctx, [], yulCall "mk_closure" ([yulNum closureId, yulNum (cast missing)] ++ paddedClosureArgs))
       Nothing =>
         let paddedArgs = padArgs ctx.arities fnName compiledArgs
-        in pure ([], yulCall fnName paddedArgs)
+        in pure (ctx, [], yulCall fnName paddedArgs)
 
   -- Application of closure to argument
   compileANFExprWithStmts ctx (AApp _ _ closure arg) = do
-    pure ([], yulCall "apply_closure" [compileAVar closure, compileAVar arg])
+    pure (ctx, [], yulCall "apply_closure" [compileAVar closure, compileAVar arg])
 
   -- Constructor application
   compileANFExprWithStmts ctx (ACon _ n ci (Just tag) args) = do
-    pure ([], yulNum (cast tag))
+    pure (ctx, [], yulNum (cast tag))
 
   compileANFExprWithStmts ctx (ACon _ n ci Nothing args) = do
-    pure ([], yulNum 0)
+    pure (ctx, [], yulNum 0)
 
   -- Primitive operation
   compileANFExprWithStmts ctx (AOp _ _ fn args) = do
     let compiledArgs = map compileAVar args
-    pure ([], compilePrimFn fn compiledArgs)
+    let expr = compilePrimFn fn compiledArgs
+    -- Check if result is a void opcode (like revert)
+    case expr of
+      YCall fname _ => if isVoidOp fname
+                         then pure (ctx, [YExprStmt expr], yulNum 0)
+                         else pure (ctx, [], expr)
+      _ => pure (ctx, [], expr)
+    where
+      isVoidOp : String -> Bool
+      isVoidOp "revert" = True
+      isVoidOp "return" = True
+      isVoidOp "stop" = True
+      isVoidOp _ = False
 
   -- External primitive (FFI)
   compileANFExprWithStmts ctx (AExtPrim _ _ n args) = do
     let compiledArgs = map compileAVar args
     case parseEvmForeign (show n) of
-      Just (op, _) => pure ([], evmOpcodeToYul op compiledArgs)
+      Just (op, _) =>
+        let expr = evmOpcodeToYul op compiledArgs
+        in case expr of
+             YCall fname _ => if isVoidOp fname
+                                then pure (ctx, [YExprStmt expr], yulNum 0)
+                                else pure (ctx, [], expr)
+             _ => pure (ctx, [], expr)
       Nothing =>
         let fnName = mangleName n
             paddedArgs = padArgs ctx.arities fnName compiledArgs
-        in pure ([], yulCall fnName paddedArgs)
+        in pure (ctx, [], yulCall fnName paddedArgs)
+    where
+      isVoidOp : String -> Bool
+      isVoidOp "revert" = True
+      isVoidOp "return" = True
+      isVoidOp "stop" = True
+      isVoidOp "sstore" = True
+      isVoidOp "mstore" = True
+      isVoidOp "mstore8" = True
+      isVoidOp "log0" = True
+      isVoidOp "log1" = True
+      isVoidOp "log2" = True
+      isVoidOp "log3" = True
+      isVoidOp "log4" = True
+      isVoidOp _ = False
 
   -- Constant
-  compileANFExprWithStmts ctx (APrimVal _ c) = pure ([], compileConstant c)
+  compileANFExprWithStmts ctx (APrimVal _ c) = pure (ctx, [], compileConstant c)
 
   -- Erased value
-  compileANFExprWithStmts ctx (AErased _) = pure ([], yulNum 0)
+  compileANFExprWithStmts ctx (AErased _) = pure (ctx, [], yulNum 0)
 
-  -- Crash
-  compileANFExprWithStmts ctx (ACrash _ msg) = pure ([], yulCall "revert" [yulNum 0, yulNum 0])
+  -- Crash - revert doesn't return a value, so emit as statement then return 0 (unreachable)
+  compileANFExprWithStmts ctx (ACrash _ msg) =
+    pure (ctx, [YExprStmt (yulCall "revert" [yulNum 0, yulNum 0])], yulNum 0)
 
   -- Let binding - THIS IS THE KEY FIX
   -- Generate the assignment statement, then compile the body
   -- This handles nested lets by hoisting inner assignments before the outer one
   compileANFExprWithStmts ctx (ALet _ var val body) = do
-    (valStmts, valExpr) <- compileANFExprWithStmts ctx val
-    (bodyStmts, bodyExpr) <- compileANFExprWithStmts ctx body
+    (ctx1, valStmts, valExpr) <- compileANFExprWithStmts ctx val
+    (ctx2, bodyStmts, bodyExpr) <- compileANFExprWithStmts ctx1 body
     -- The assignment for this let binding
-    let assignStmt = yulAssign (varName var) valExpr
-    pure (valStmts ++ [assignStmt] ++ bodyStmts, bodyExpr)
+    -- For void opcodes (revert, return, etc.), emit as statement instead of assignment
+    let assignStmt = case valExpr of
+          YCall fname _ => if isVoidOpcode fname
+                             then YExprStmt valExpr
+                             else yulAssign (varName var) valExpr
+          _ => yulAssign (varName var) valExpr
+    pure (ctx2, valStmts ++ [assignStmt] ++ bodyStmts, bodyExpr)
+    where
+      isVoidOpcode : String -> Bool
+      isVoidOpcode "revert" = True
+      isVoidOpcode "return" = True
+      isVoidOpcode "stop" = True
+      isVoidOpcode "selfdestruct" = True
+      isVoidOpcode "log0" = True
+      isVoidOpcode "log1" = True
+      isVoidOpcode "log2" = True
+      isVoidOpcode "log3" = True
+      isVoidOpcode "log4" = True
+      isVoidOpcode "sstore" = True
+      isVoidOpcode "mstore" = True
+      isVoidOpcode "mstore8" = True
+      isVoidOpcode _ = False
 
-  -- Case expression - just return the scrutinee variable
-  compileANFExprWithStmts ctx (AConCase _ sc alts def) = do
-    pure ([], compileAVar sc)
+  -- Case expression: generate switch with result assignment in each branch
+  -- Uses unique case_result variable name to avoid nested case collisions
+  compileANFExprWithStmts ctx (AConCase _ sc alts mdef) = do
+    let scExpr = compileAVar sc
+    let (ctx1, resultVar) = nextCaseVar ctx  -- Get unique variable name
+    (ctx2, cases) <- compileConAltsExpr ctx1 scExpr resultVar alts
+    (ctx3, defStmt) <- the (Core (CompileCtx, Maybe YulStmt)) $ case mdef of
+      Just d => do
+        (ctxD, dStmts, dExpr) <- compileANFExprWithStmts ctx2 d
+        pure (ctxD, Just (YBlock (dStmts ++ [yulAssign resultVar dExpr])))
+      Nothing => pure (ctx2, Nothing)
+    let declStmt = yulLet resultVar (YLit (YulNum 0))  -- declare variable before switch
+    let switchStmt = YSwitch (readTag scExpr) cases defStmt
+    pure (ctx3, [declStmt, switchStmt], YVar resultVar)
+    where
+      -- Generate field extraction for constructor arguments
+      extractFields : YulExpr -> List Int -> List YulStmt
+      extractFields ptr args =
+        zipWith (\idx, var => yulAssign (varName var) (readField ptr idx))
+                (take (length args) [0..]) args
 
-  compileANFExprWithStmts ctx (AConstCase _ sc alts def) = do
-    pure ([], compileAVar sc)
+      compileConAltExpr : CompileCtx -> YulExpr -> String -> AConAlt -> Core (CompileCtx, YulCase)
+      compileConAltExpr ctxIn scPtr resVar (MkAConAlt n ci (Just tag) args body) = do
+        let fieldExtracts = extractFields scPtr args
+        (ctxOut, bodyStmts, bodyExpr) <- compileANFExprWithStmts ctxIn body
+        pure (ctxOut, MkCase (YulNum (cast tag)) (YBlock (fieldExtracts ++ bodyStmts ++ [yulAssign resVar bodyExpr])))
+      compileConAltExpr ctxIn scPtr resVar (MkAConAlt n ci Nothing args body) = do
+        let fieldExtracts = extractFields scPtr args
+        (ctxOut, bodyStmts, bodyExpr) <- compileANFExprWithStmts ctxIn body
+        pure (ctxOut, MkCase (YulNum 0) (YBlock (fieldExtracts ++ bodyStmts ++ [yulAssign resVar bodyExpr])))
+
+      -- Compile alternatives, threading context through
+      compileConAltsExpr : CompileCtx -> YulExpr -> String -> List AConAlt -> Core (CompileCtx, List YulCase)
+      compileConAltsExpr ctxIn scPtr resVar [] = pure (ctxIn, [])
+      compileConAltsExpr ctxIn scPtr resVar (alt :: alts) = do
+        (ctx', c) <- compileConAltExpr ctxIn scPtr resVar alt
+        (ctx'', cs) <- compileConAltsExpr ctx' scPtr resVar alts
+        pure (ctx'', c :: cs)
+
+  compileANFExprWithStmts ctx (AConstCase _ sc alts mdef) = do
+    let scExpr = compileAVar sc
+    let (ctx1, resultVar) = nextCaseVar ctx  -- Get unique variable name
+    (ctx2, cases) <- compileConstAltsExpr ctx1 resultVar alts
+    (ctx3, defStmt) <- the (Core (CompileCtx, Maybe YulStmt)) $ case mdef of
+      Just d => do
+        (ctxD, dStmts, dExpr) <- compileANFExprWithStmts ctx2 d
+        pure (ctxD, Just (YBlock (dStmts ++ [yulAssign resultVar dExpr])))
+      Nothing => pure (ctx2, Nothing)
+    let declStmt = yulLet resultVar (YLit (YulNum 0))  -- declare variable before switch
+    let switchStmt = YSwitch scExpr cases defStmt
+    pure (ctx3, [declStmt, switchStmt], YVar resultVar)
+    where
+      constToLit : Constant -> YulLiteral
+      constToLit (I x) = YulNum (cast x)
+      constToLit (BI x) = YulNum x
+      constToLit (B8 x) = YulNum (cast x)
+      constToLit (B16 x) = YulNum (cast x)
+      constToLit (B32 x) = YulNum (cast x)
+      constToLit (B64 x) = YulNum (cast x)
+      constToLit (Ch c) = YulNum (cast (ord c))
+      constToLit _ = YulNum 0
+
+      compileConstAltExpr : CompileCtx -> String -> AConstAlt -> Core (CompileCtx, YulCase)
+      compileConstAltExpr ctxIn resVar (MkAConstAlt c body) = do
+        (ctxOut, bodyStmts, bodyExpr) <- compileANFExprWithStmts ctxIn body
+        pure (ctxOut, MkCase (constToLit c) (YBlock (bodyStmts ++ [yulAssign resVar bodyExpr])))
+
+      -- Compile alternatives, threading context through
+      compileConstAltsExpr : CompileCtx -> String -> List AConstAlt -> Core (CompileCtx, List YulCase)
+      compileConstAltsExpr ctxIn resVar [] = pure (ctxIn, [])
+      compileConstAltsExpr ctxIn resVar (alt :: alts) = do
+        (ctx', c) <- compileConstAltExpr ctxIn resVar alt
+        (ctx'', cs) <- compileConstAltsExpr ctx' resVar alts
+        pure (ctx'', c :: cs)
 
 ||| Compile ANF expression to Yul expression (legacy interface)
 compileANFExpr : CompileCtx -> ANF -> Core YulExpr
 compileANFExpr ctx anf = do
-  (_, expr) <- compileANFExprWithStmts ctx anf
+  (_, _, expr) <- compileANFExprWithStmts ctx anf
   pure expr
 
 ||| Compile ANF expression (with arity map for proper call padding)
 compileANFWithArities : FnArityMap -> ANF -> Core YulExpr
-compileANFWithArities arities = compileANFExpr (MkCompileCtx arities empty)
+compileANFWithArities arities = compileANFExpr (MkCompileCtx arities empty 0)
 
 ||| Legacy wrapper (for backward compatibility)
 export
@@ -283,8 +433,8 @@ compileANF = compileANFWithArities empty
 compileANFStmtCtx : CompileCtx -> ANF -> Core (List YulStmt)
 compileANFStmtCtx ctx (ALet _ var val body) = do
   -- Use compileANFExprWithStmts to capture any nested let bindings
-  (valStmts, valExpr) <- compileANFExprWithStmts ctx val
-  bodyStmts <- compileANFStmtCtx ctx body
+  (ctx1, valStmts, valExpr) <- compileANFExprWithStmts ctx val
+  bodyStmts <- compileANFStmtCtx ctx1 body
   -- Include hoisted statements, then the assignment, then body
   pure $ valStmts ++ [yulAssign (varName var) valExpr] ++ bodyStmts
 
@@ -341,7 +491,7 @@ compileANFStmtCtx ctx (AConstCase _ sc alts mdef) = do
 
 compileANFStmtCtx ctx anf = do
   -- Use compileANFExprWithStmts to capture any nested let bindings
-  (stmts, expr) <- compileANFExprWithStmts ctx anf
+  (_, stmts, expr) <- compileANFExprWithStmts ctx anf
   -- Include hoisted statements, then the final expression/assignment
   let finalStmt = case expr of
         YCall fname _ =>
@@ -368,7 +518,7 @@ compileANFStmtCtx ctx anf = do
 
 ||| Compile ANF to Yul statement (for let bindings and cases)
 compileANFStmtWithArities : FnArityMap -> ANF -> Core (List YulStmt)
-compileANFStmtWithArities arities = compileANFStmtCtx (MkCompileCtx arities empty)
+compileANFStmtWithArities arities = compileANFStmtCtx (MkCompileCtx arities empty 0)
 
 ||| Legacy wrapper
 export
@@ -434,6 +584,7 @@ compileDefCtx ctx (n, MkAFun args body) = do
     , params = map varName args
     , returns = ["result"]
     , body = YBlock (initStmts ++ bodyStmts)
+    , sourceLoc = nameToSourceLoc n
     }
 
 compileDefCtx ctx (n, MkACon tag arity nt) = do
@@ -449,6 +600,7 @@ compileDefCtx ctx (n, MkACon tag arity nt) = do
         zipWith (\i, arg => YExprStmt $ mstore
           (yulCall "add" [yulVar "ptr", yulNum ((i + 1) * 32)])
           (yulVar arg)) (take (length argNames) [0..]) argNames
+    , sourceLoc = nameToSourceLoc n
     }
 
 compileDefCtx ctx (n, MkAForeign ccs fargs ret) = do
@@ -465,6 +617,22 @@ compileDefCtx ctx (n, MkAForeign ccs fargs ret) = do
                     _ => True
   -- All functions return "result" for consistency - void functions return 0
   case mbOp of
+    Just ("returnOrRevert", _) => do
+      -- Special compound opcode: returnOrRevert(success, offset, length)
+      -- Expands to: switch success { case 1: return(off,len) default: revert(off,len) }
+      pure $ Just $ MkYulFun
+        { name = mangleName n
+        , params = argNames
+        , returns = ["result"]
+        , body = YBlock
+            [ YSwitch (yulVar "arg0")  -- success
+                [ MkCase (YulNum 1) (YBlock [YExprStmt $ yulCall "return" [yulVar "arg1", yulVar "arg2"]])
+                ]
+                (Just (YBlock [YExprStmt $ yulCall "revert" [yulVar "arg1", yulVar "arg2"]]))
+            , yulAssign "result" (yulNum 0)  -- Never reached
+            ]
+        , sourceLoc = nameToSourceLoc n
+        }
     Just (op, _) => do
       pure $ Just $ MkYulFun
         { name = mangleName n
@@ -475,6 +643,7 @@ compileDefCtx ctx (n, MkAForeign ccs fargs ret) = do
               then [yulAssign "result" (evmOpcodeToYul op (map yulVar argNames))]
               else [YExprStmt (evmOpcodeToYul op (map yulVar argNames))
                    , yulAssign "result" (yulNum 0)]  -- Return 0 for void
+        , sourceLoc = nameToSourceLoc n
         }
     Nothing =>
       -- Try to extract opcode from function name if foreign spec failed
@@ -492,16 +661,59 @@ compileDefCtx ctx (n, MkAForeign ccs fargs ret) = do
                   then [yulAssign "result" (evmOpcodeToYul op (map yulVar argNames))]
                   else [YExprStmt (evmOpcodeToYul op (map yulVar argNames))
                        , yulAssign "result" (yulNum 0)]  -- Return 0 for void
+            , sourceLoc = nameToSourceLoc n
             }
         Nothing =>
-          -- Generate a stub that calls invalid() for unrecognized foreign
+          -- Generate a no-op stub for unrecognized foreign (e.g., putStr, putStrLn)
+          -- These are IO primitives that don't exist in EVM; just return 0
           pure $ Just $ MkYulFun
             { name = mangleName n
             , params = argNames
             , returns = ["result"]
-            , body = YBlock [yulAssign "result" (yulCall "invalid" [])]
+            , body = YBlock [yulAssign "result" (yulNum 0)]
+            , sourceLoc = nameToSourceLoc n
             }
   where
+    -- List of valid EVM opcodes that can be extracted from prim__ names
+    isEvmOpcode : String -> Bool
+    isEvmOpcode "sload" = True
+    isEvmOpcode "sstore" = True
+    isEvmOpcode "mload" = True
+    isEvmOpcode "mstore" = True
+    isEvmOpcode "mstore8" = True
+    isEvmOpcode "calldataload" = True
+    isEvmOpcode "calldatasize" = True
+    isEvmOpcode "calldatacopy" = True
+    isEvmOpcode "returndatasize" = True
+    isEvmOpcode "returndatacopy" = True
+    isEvmOpcode "return" = True
+    isEvmOpcode "revert" = True
+    isEvmOpcode "stop" = True
+    isEvmOpcode "caller" = True
+    isEvmOpcode "callvalue" = True
+    isEvmOpcode "origin" = True
+    isEvmOpcode "address" = True
+    isEvmOpcode "balance" = True
+    isEvmOpcode "selfbalance" = True
+    isEvmOpcode "timestamp" = True
+    isEvmOpcode "number" = True
+    isEvmOpcode "chainid" = True
+    isEvmOpcode "gas" = True
+    isEvmOpcode "gasprice" = True
+    isEvmOpcode "keccak256" = True
+    isEvmOpcode "log0" = True
+    isEvmOpcode "log1" = True
+    isEvmOpcode "log2" = True
+    isEvmOpcode "log3" = True
+    isEvmOpcode "log4" = True
+    isEvmOpcode "call" = True
+    isEvmOpcode "delegatecall" = True
+    isEvmOpcode "staticcall" = True
+    isEvmOpcode "create" = True
+    isEvmOpcode "create2" = True
+    isEvmOpcode "returnOrRevert" = True
+    isEvmOpcode _ = False
+
     extractBuiltinOp : String -> Maybe String
     extractBuiltinOp name =
       -- Extract opcode from names like "Main.prim__sload" or "prim__sload"
@@ -509,7 +721,9 @@ compileDefCtx ctx (n, MkAForeign ccs fargs ret) = do
           filtered = filter (\p => p /= "" && p /= "prim") parts
       in case filtered of
            [] => Nothing
-           (x :: xs) => Just (fromMaybe x (last' xs))
+           (x :: xs) =>
+             let op = fromMaybe x (last' xs)
+             in if isEvmOpcode op then Just op else Nothing
 
 compileDefCtx ctx (n, MkAError exp) = do
   -- Error case: generate revert
@@ -518,11 +732,12 @@ compileDefCtx ctx (n, MkAError exp) = do
     , params = []
     , returns = []
     , body = YBlock [YExprStmt $ yulCall "revert" [yulNum 0, yulNum 0]]
+    , sourceLoc = nameToSourceLoc n
     }
 
 ||| Compile an ANF definition to a Yul function (with arity map)
 compileDefWithArities : FnArityMap -> (Name, ANFDef) -> Core (Maybe YulFun)
-compileDefWithArities arities = compileDefCtx (MkCompileCtx arities empty)
+compileDefWithArities arities = compileDefCtx (MkCompileCtx arities empty 0)
 
 ||| Compile an ANF definition to a Yul function
 export
@@ -563,7 +778,7 @@ generateYul name defs = do
   let arities = collectArities defs
   let closureTargets = collectClosureTargets defs
   let closureIds = buildClosureIdMap closureTargets
-  let ctx = MkCompileCtx arities closureIds
+  let ctx = MkCompileCtx arities closureIds 0
   -- Second pass: compile with context
   allFuns <- catMaybes <$> traverse (compileDefCtx ctx) defs
   -- Deduplicate functions (ANF may produce duplicates from typeclass instances)
@@ -627,6 +842,7 @@ generateYul name defs = do
           , YExprStmt $ mstore (yulCall "add" [yulVar "ptr", yulNum 128]) (yulVar "arg2")
           , YExprStmt $ mstore (yulCall "add" [yulVar "ptr", yulNum 160]) (yulVar "arg3")
           ]
+      , sourceLoc = Nothing  -- Runtime helper, no source location
       }
 
     ||| Generate dispatch case for a single closure target
@@ -671,6 +887,7 @@ generateYul name defs = do
             , YSwitch (yulVar "func_id") cases
                 (Just $ YBlock [yulAssign "result" (yulNum 0)])  -- default: return 0
             ]
+        , sourceLoc = Nothing  -- Runtime helper, no source location
         }
 
 ||| Write Yul output to file
