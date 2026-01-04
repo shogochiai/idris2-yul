@@ -4,51 +4,7 @@
 ||| Emits Received event when ETH is sent to the contract
 module Main
 
--- =============================================================================
--- EVM Primitives (FFI)
--- =============================================================================
-
-%foreign "evm:caller"
-prim__caller : PrimIO Integer
-
-%foreign "evm:callvalue"
-prim__callvalue : PrimIO Integer
-
-%foreign "evm:calldatasize"
-prim__calldatasize : PrimIO Integer
-
-%foreign "evm:mstore"
-prim__mstore : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:log2"
-prim__log2 : Integer -> Integer -> Integer -> Integer -> PrimIO ()
-
-%foreign "evm:stop"
-prim__stop : PrimIO ()
-
--- =============================================================================
--- Wrapped Primitives
--- =============================================================================
-
-caller : IO Integer
-caller = primIO prim__caller
-
-callvalue : IO Integer
-callvalue = primIO prim__callvalue
-
-calldatasize : IO Integer
-calldatasize = primIO prim__calldatasize
-
-mstore : Integer -> Integer -> IO ()
-mstore off val = primIO (prim__mstore off val)
-
-||| LOG2: Emit event with 2 indexed topics
-||| log2(offset, size, topic1, topic2)
-log2 : Integer -> Integer -> Integer -> Integer -> IO ()
-log2 off size topic1 topic2 = primIO (prim__log2 off size topic1 topic2)
-
-stop : IO ()
-stop = primIO prim__stop
+import EVM.Primitives
 
 -- =============================================================================
 -- Event Signature

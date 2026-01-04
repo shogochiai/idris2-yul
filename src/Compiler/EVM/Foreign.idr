@@ -77,6 +77,8 @@ opcodeArity "delegatecall" = 6
 opcodeArity "staticcall" = 6
 opcodeArity "create" = 3
 opcodeArity "create2" = 4
+-- Compound operations
+opcodeArity "returnOrRevert" = 3  -- success, offset, length
 -- Bitwise operations
 opcodeArity "and" = 2
 opcodeArity "or" = 2
@@ -89,8 +91,21 @@ opcodeArity _ = 0
 
 ||| Generate Yul for EVM opcode call
 ||| Takes expected args and ignores extra (like world token)
+||| Special handling for compound operations like returnOrRevert
 export
 evmOpcodeToYul : String -> List YulExpr -> YulExpr
+evmOpcodeToYul "returnOrRevert" args =
+  -- returnOrRevert(success, offset, length)
+  -- Expands to: if success { return(offset, length) } else { revert(offset, length) }
+  -- Since we can't return a statement here, we use a Yul function call pattern
+  -- We'll inline the logic in a way that works in expression context
+  case args of
+    [success, off, len] =>
+      -- This is a workaround: we use Yul's ternary-like pattern with functions
+      -- Actually, we need to generate statements, not an expression
+      -- For now, just return the call and handle it specially in Codegen
+      yulCall "returnOrRevert" [success, off, len]
+    _ => yulCall "returnOrRevert" args
 evmOpcodeToYul op args =
   let arity = opcodeArity op
       relevantArgs = take arity args

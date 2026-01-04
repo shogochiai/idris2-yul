@@ -4,74 +4,7 @@
 ||| Implements balanceOf, transfer, approve, transferFrom, allowance
 module Main
 
--- =============================================================================
--- EVM Primitives (FFI)
--- =============================================================================
-
-%foreign "evm:caller"
-prim__caller : PrimIO Integer
-
-%foreign "evm:calldataload"
-prim__calldataload : Integer -> PrimIO Integer
-
-%foreign "evm:calldatasize"
-prim__calldatasize : PrimIO Integer
-
-%foreign "evm:sload"
-prim__sload : Integer -> PrimIO Integer
-
-%foreign "evm:sstore"
-prim__sstore : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:mstore"
-prim__mstore : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:return"
-prim__return : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:revert"
-prim__revert : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:keccak256"
-prim__keccak256 : Integer -> Integer -> PrimIO Integer
-
-%foreign "evm:log3"
-prim__log3 : Integer -> Integer -> Integer -> Integer -> Integer -> PrimIO ()
-
--- =============================================================================
--- Wrapped Primitives
--- =============================================================================
-
-caller : IO Integer
-caller = primIO prim__caller
-
-calldataload : Integer -> IO Integer
-calldataload off = primIO (prim__calldataload off)
-
-calldatasize : IO Integer
-calldatasize = primIO prim__calldatasize
-
-sload : Integer -> IO Integer
-sload slot = primIO (prim__sload slot)
-
-sstore : Integer -> Integer -> IO ()
-sstore slot val = primIO (prim__sstore slot val)
-
-mstore : Integer -> Integer -> IO ()
-mstore off val = primIO (prim__mstore off val)
-
-evmReturn : Integer -> Integer -> IO ()
-evmReturn off len = primIO (prim__return off len)
-
-evmRevert : Integer -> Integer -> IO ()
-evmRevert off len = primIO (prim__revert off len)
-
-keccak256 : Integer -> Integer -> IO Integer
-keccak256 off len = primIO (prim__keccak256 off len)
-
-||| LOG3: Emit event with 3 indexed topics
-log3 : Integer -> Integer -> Integer -> Integer -> Integer -> IO ()
-log3 off size topic1 topic2 topic3 = primIO (prim__log3 off size topic1 topic2 topic3)
+import EVM.Primitives
 
 -- =============================================================================
 -- Storage Layout
@@ -267,22 +200,6 @@ mint to amount = do
 -- =============================================================================
 -- Entry Point
 -- =============================================================================
-
-getSelector : IO Integer
-getSelector = do
-  data_ <- calldataload 0
-  pure (data_ `div` (256 * 256 * 256 * 256 * 256 * 256 * 256 * 256 *
-                     256 * 256 * 256 * 256 * 256 * 256 * 256 * 256 *
-                     256 * 256 * 256 * 256 * 256 * 256 * 256 * 256 *
-                     256 * 256 * 256 * 256))
-
-returnUint : Integer -> IO ()
-returnUint val = do
-  mstore 0 val
-  evmReturn 0 32
-
-returnBool : Bool -> IO ()
-returnBool b = returnUint (if b then 1 else 0)
 
 ||| Read address from calldata (right-aligned in 32 bytes)
 readAddress : Integer -> IO Integer

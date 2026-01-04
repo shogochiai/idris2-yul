@@ -10,7 +10,6 @@ sourcedir = "src"
 depends = base
         , contrib
         , idris2
-        , idris2-mc
 
 modules = Compiler.EVM.Yul
         , Compiler.EVM.YulIR
@@ -19,7 +18,13 @@ modules = Compiler.EVM.Yul
         , Compiler.EVM.Foreign
         , Compiler.EVM.Memory
         , Compiler.EVM.ABI
+        , Compiler.EVM.Solc
         , Compiler.EVM.Tests.AllTests
+        , EVM.Primitives
+        , EVM.Storage.Namespace
+        , EVM.Storage.Storable
+        , EVM.ABI.Types
+        , EVM.ABI.JSON
 
 main = Main
 executable = idris2-yul

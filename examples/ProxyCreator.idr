@@ -4,90 +4,11 @@
 ||| Creates new proxy contracts using CREATE opcode
 module Main
 
--- =============================================================================
--- EVM Primitives (FFI)
--- =============================================================================
+import EVM.Primitives
 
-%foreign "evm:caller"
-prim__caller : PrimIO Integer
-
-%foreign "evm:calldataload"
-prim__calldataload : Integer -> PrimIO Integer
-
-%foreign "evm:calldatasize"
-prim__calldatasize : PrimIO Integer
-
-%foreign "evm:calldatacopy"
-prim__calldatacopy : Integer -> Integer -> Integer -> PrimIO ()
-
-%foreign "evm:mstore"
-prim__mstore : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:mload"
-prim__mload : Integer -> PrimIO Integer
-
-%foreign "evm:create"
-prim__create : Integer -> Integer -> Integer -> PrimIO Integer
-
-%foreign "evm:return"
-prim__return : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:revert"
-prim__revert : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:log2"
-prim__log2 : Integer -> Integer -> Integer -> Integer -> PrimIO ()
-
-%foreign "evm:shl"
-prim__shl : Integer -> Integer -> PrimIO Integer
-
-%foreign "evm:or"
-prim__or : Integer -> Integer -> PrimIO Integer
-
--- =============================================================================
--- Wrapped Primitives
--- =============================================================================
-
-caller : IO Integer
-caller = primIO prim__caller
-
-calldataload : Integer -> IO Integer
-calldataload off = primIO (prim__calldataload off)
-
-calldatasize : IO Integer
-calldatasize = primIO prim__calldatasize
-
-calldatacopy : Integer -> Integer -> Integer -> IO ()
-calldatacopy destOff srcOff len = primIO (prim__calldatacopy destOff srcOff len)
-
-mstore : Integer -> Integer -> IO ()
-mstore off val = primIO (prim__mstore off val)
-
-mload : Integer -> IO Integer
-mload off = primIO (prim__mload off)
-
-||| CREATE: Deploy new contract
-||| create(value, offset, size) -> address
-||| Returns 0 on failure
-create : Integer -> Integer -> Integer -> IO Integer
-create value off size = primIO (prim__create value off size)
-
-evmReturn : Integer -> Integer -> IO ()
-evmReturn off len = primIO (prim__return off len)
-
-evmRevert : Integer -> Integer -> IO ()
-evmRevert off len = primIO (prim__revert off len)
-
-log2 : Integer -> Integer -> Integer -> Integer -> IO ()
-log2 off size topic1 topic2 = primIO (prim__log2 off size topic1 topic2)
-
-||| Shift left: shl(shift, value) = value << shift
-shl : Integer -> Integer -> IO Integer
-shl shift val = primIO (prim__shl shift val)
-
-||| Bitwise OR
+||| Bitwise OR (alias for convenience)
 bitor : Integer -> Integer -> IO Integer
-bitor a b = primIO (prim__or a b)
+bitor a b = or a b
 
 -- =============================================================================
 -- Event Signature

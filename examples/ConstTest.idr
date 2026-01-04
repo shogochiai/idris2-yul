@@ -1,10 +1,6 @@
 module Main
 
-%foreign "evm:sstore"
-prim__sstore : Integer -> Integer -> PrimIO ()
-
-sstore : Integer -> Integer -> IO ()
-sstore slot val = primIO (prim__sstore slot val)
+import EVM.Primitives
 
 -- Constants
 MAGIC : Integer

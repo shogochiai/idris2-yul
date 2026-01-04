@@ -34,10 +34,10 @@ echo ""
 # Step 1: Idris2 -> Yul
 echo "[1/3] Compiling Idris2 to Yul..."
 
-# Build idris2-mc if not built
-if [ ! -d "/Users/bob/code/idris2-mc/build/ttc" ]; then
-  echo "Building idris2-mc..."
-  (cd /Users/bob/code/idris2-mc && idris2 --build idris2-mc.ipkg)
+# Build idris2-subcontract if not built
+if [ ! -d "/Users/bob/code/idris2-subcontract/build/ttc" ]; then
+  echo "Building idris2-subcontract..."
+  (cd /Users/bob/code/idris2-subcontract && idris2 --build idris2-subcontract.ipkg)
 fi
 
 # Build idris2-yul if not built
@@ -46,10 +46,15 @@ if [ ! -f "./build/exec/idris2-yul" ]; then
   idris2 --build idris2-yul.ipkg
 fi
 
-# Set package path to include idris2-mc
-export IDRIS2_PACKAGE_PATH="/Users/bob/code/idris2-yul/depends:${IDRIS2_PACKAGE_PATH:-}"
+# Set package path
+export IDRIS2_PACKAGE_PATH="/Users/bob/code/idris2-yul/depends:/Users/bob/code/idris2-subcontract/build/ttc:${IDRIS2_PACKAGE_PATH:-}"
 
-./build/exec/idris2-yul -p idris2-mc "$SOURCE" -o "$BASENAME.yul"
+# Check if source needs idris2-subcontract package
+if grep -q "import.*Subcontract\|import.*MC\." "$SOURCE" 2>/dev/null; then
+  ./build/exec/idris2-yul -p idris2-subcontract "$SOURCE" -o "$BASENAME.yul"
+else
+  ./build/exec/idris2-yul "$SOURCE" -o "$BASENAME.yul"
+fi
 
 YUL_FILE="build/exec/${BASENAME}.yul.yul"
 if [ ! -f "$YUL_FILE" ]; then

@@ -5,64 +5,7 @@
 ||| Uses 18 decimal fixed-point (like Solidity's 1e18)
 module Main
 
--- =============================================================================
--- EVM Primitives (FFI)
--- =============================================================================
-
-%foreign "evm:sload"
-prim__sload : Integer -> PrimIO Integer
-
-%foreign "evm:sstore"
-prim__sstore : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:caller"
-prim__caller : PrimIO Integer
-
-%foreign "evm:callvalue"
-prim__callvalue : PrimIO Integer
-
-%foreign "evm:calldataload"
-prim__calldataload : Integer -> PrimIO Integer
-
-%foreign "evm:calldatasize"
-prim__calldatasize : PrimIO Integer
-
-%foreign "evm:return"
-prim__return : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:revert"
-prim__revert : Integer -> Integer -> PrimIO ()
-
-%foreign "evm:mstore"
-prim__mstore : Integer -> Integer -> PrimIO ()
-
--- =============================================================================
--- Wrapped Primitives
--- =============================================================================
-
-sload : Integer -> IO Integer
-sload slot = primIO (prim__sload slot)
-
-sstore : Integer -> Integer -> IO ()
-sstore slot val = primIO (prim__sstore slot val)
-
-caller : IO Integer
-caller = primIO prim__caller
-
-callvalue : IO Integer
-callvalue = primIO prim__callvalue
-
-calldataload : Integer -> IO Integer
-calldataload off = primIO (prim__calldataload off)
-
-evmReturn : Integer -> Integer -> IO ()
-evmReturn off len = primIO (prim__return off len)
-
-evmRevert : Integer -> Integer -> IO ()
-evmRevert off len = primIO (prim__revert off len)
-
-mstore : Integer -> Integer -> IO ()
-mstore off val = primIO (prim__mstore off val)
+import EVM.Primitives
 
 -- =============================================================================
 -- Fixed-Point Arithmetic (18 decimals)
@@ -260,19 +203,6 @@ SEL_SELL = 0xe4849b32
 -- Entry Point
 -- =============================================================================
 
-getSelector : IO Integer
-getSelector = do
-  data_ <- calldataload 0
-  pure (data_ `div` (256 * 256 * 256 * 256 * 256 * 256 * 256 * 256 *
-                     256 * 256 * 256 * 256 * 256 * 256 * 256 * 256 *
-                     256 * 256 * 256 * 256 * 256 * 256 * 256 * 256 *
-                     256 * 256 * 256 * 256))
-
-returnUint256 : Integer -> IO ()
-returnUint256 val = do
-  mstore 0 val
-  evmReturn 0 32
-
 main : IO ()
 main = do
   selector <- getSelector
@@ -284,27 +214,27 @@ main = do
     else if selector == SEL_GET_SUPPLY
     then do
       supply <- getSupply
-      returnUint256 supply
+      returnUint supply
     else if selector == SEL_GET_RESERVE
     then do
       reserve <- getReserve
-      returnUint256 reserve
+      returnUint reserve
     else if selector == SEL_GET_PRICE
     then do
       price <- getPrice
-      returnUint256 price
+      returnUint price
     else if selector == SEL_GET_BALANCE
     then do
       addr <- calldataload 4
       bal <- getBalance addr
-      returnUint256 bal
+      returnUint bal
     else if selector == SEL_BUY
     then do
       tokens <- buy
-      returnUint256 tokens
+      returnUint tokens
     else if selector == SEL_SELL
     then do
       amount <- calldataload 4
       ethOut <- sell amount
-      returnUint256 ethOut
+      returnUint ethOut
     else evmRevert 0 0

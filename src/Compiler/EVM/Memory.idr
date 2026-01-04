@@ -52,6 +52,7 @@ allocatorFunction = MkYulFun
       , YExprStmt $ mstore (yulNum FREE_MEM_PTR)
           (yulCall "add" [yulVar "ptr", yulVar "size"])
       ]
+  , sourceLoc = Nothing  -- Runtime helper, no source location
   }
 
 -- =============================================================================

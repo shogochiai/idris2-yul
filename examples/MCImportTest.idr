@@ -7,15 +7,7 @@ module Main
 import MC.Std.Storage.ERC7201
 import MC.Std.Storage.Schema
 
--- =============================================================================
--- Additional EVM primitives for testing
--- =============================================================================
-
-%foreign "evm:return"
-prim__return : Integer -> Integer -> PrimIO ()
-
-evmReturn : Integer -> Integer -> IO ()
-evmReturn off len = primIO (prim__return off len)
+import EVM.Primitives
 
 -- =============================================================================
 -- Test: Use pre-computed MC slots
